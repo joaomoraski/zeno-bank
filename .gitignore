@@ -1,0 +1,84 @@
+# Internal docs (kept locally, not for the repo)
+work-instructions.md
+quiz-results-*.md
+docs/briefing.md
+docs/PLAN.md
+docs/PROMPT-claude-code.md
+docs/reference/
+docs/research/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+eggs/
+*.whl
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# uv
+.python-version
+
+# pytest
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# mypy
+.mypy_cache/
+
+# ruff
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Docker
+docker-compose.override.yml
+
+# Postgres data (local)
+pgdata/
+postgres-data/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.turbo/
+
+# Next.js environment
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs artifacts (zip already extracted)
+docs/banco-ficticio-docs.zip
+
+# OMC state
+.omc/

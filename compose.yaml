@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: digital_bank
+      POSTGRES_PASSWORD: digital_bank
+      POSTGRES_DB: digital_bank_test
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U digital_bank"]
+      interval: 2s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
