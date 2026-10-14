@@ -18,14 +18,14 @@ def db_schema():
         schema_sql = f.read()
 
     with psycopg.connect(DATABASE_URL) as conn:
-        conn.execute("DROP TABLE IF EXISTS entry, ledger_transaction, account CASCADE")
+        conn.execute("DROP TABLE IF EXISTS entry, ledger_transaction, account, customer CASCADE")
         conn.execute(schema_sql)
         conn.commit()
 
     yield
 
     with psycopg.connect(DATABASE_URL) as conn:
-        conn.execute("DROP TABLE IF EXISTS entry, ledger_transaction, account CASCADE")
+        conn.execute("DROP TABLE IF EXISTS entry, ledger_transaction, account, customer CASCADE")
         conn.commit()
 
 

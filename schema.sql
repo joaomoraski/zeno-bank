@@ -1,3 +1,11 @@
+CREATE TABLE customer (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        text NOT NULL,
+  email       text UNIQUE NOT NULL,
+  status      text NOT NULL DEFAULT 'active' CHECK (status IN ('active','blocked','closed')),
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE account (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   code            text UNIQUE NOT NULL,
@@ -5,7 +13,9 @@ CREATE TABLE account (
   normal_balance  text NOT NULL CHECK (normal_balance IN ('debit','credit')),
   allow_negative  boolean NOT NULL DEFAULT false,
   balance         numeric(20,4) NOT NULL DEFAULT 0,
-  created_at      timestamptz NOT NULL DEFAULT now()
+  customer_id     uuid REFERENCES customer(id),
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (customer_id, currency)
 );
 
 CREATE TABLE ledger_transaction (

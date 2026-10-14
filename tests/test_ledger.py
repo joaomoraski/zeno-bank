@@ -6,45 +6,13 @@ from decimal import Decimal
 import psycopg
 import pytest
 
+from src.ledger.service import post_transaction, reverse_transaction, get_balance
+from src.ledger.reconciliation import reconcile
+
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql://digital_bank:digital_bank@localhost:5432/digital_bank_test",
 )
-
-
-def post_transaction(conn, idempotency_key, description, entries):
-    """Insert a ledger transaction with its entries.
-
-    entries: list of (account_id, direction, amount, currency)
-
-    Locks account rows in ID order before inserting to prevent deadlocks
-    and enforce serialization on the same account.
-    """
-    tx_id = uuid.uuid4()
-
-    account_ids = sorted(set(str(e[0]) for e in entries))
-    conn.execute(
-        "SELECT id FROM account WHERE id = ANY(%s) ORDER BY id FOR UPDATE",
-        (account_ids,),
-    )
-
-    conn.execute(
-        """
-        INSERT INTO ledger_transaction (id, idempotency_key, description)
-        VALUES (%s, %s, %s)
-        """,
-        (str(tx_id), idempotency_key, description),
-    )
-    for account_id, direction, amount, currency in entries:
-        conn.execute(
-            """
-            INSERT INTO entry (transaction_id, account_id, direction, amount, currency)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (str(tx_id), str(account_id), direction, amount, currency),
-        )
-    conn.commit()
-    return tx_id
 
 
 class TestNonNegativeBalance:
@@ -297,55 +265,7 @@ class TestIdempotency:
         assert row[0] == Decimal("100.0000")
 
 
-def reverse_transaction(conn, original_tx_id, idempotency_key):
-    """Create a reversal: new transaction with inverted entries."""
-    reversal_id = uuid.uuid4()
-
-    account_ids = [
-        str(r[0])
-        for r in conn.execute(
-            "SELECT DISTINCT account_id FROM entry WHERE transaction_id = %s ORDER BY account_id",
-            (str(original_tx_id),),
-        ).fetchall()
-    ]
-    conn.execute(
-        "SELECT id FROM account WHERE id = ANY(%s) ORDER BY id FOR UPDATE",
-        (account_ids,),
-    )
-
-    conn.execute(
-        """
-        INSERT INTO ledger_transaction (id, idempotency_key, description, reverses_id)
-        VALUES (%s, %s, %s, %s)
-        """,
-        (str(reversal_id), idempotency_key, "reversal", str(original_tx_id)),
-    )
-
-    original_entries = conn.execute(
-        "SELECT account_id, direction, amount, currency FROM entry WHERE transaction_id = %s",
-        (str(original_tx_id),),
-    ).fetchall()
-
-    for account_id, direction, amount, currency in original_entries:
-        flipped = "credit" if direction == "debit" else "debit"
-        conn.execute(
-            """
-            INSERT INTO entry (transaction_id, account_id, direction, amount, currency)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (str(reversal_id), str(account_id), flipped, amount, currency),
-        )
-
-    conn.commit()
-    return reversal_id
-
-
 class TestReversal:
-
-    def _get_balance(self, conn, account_id):
-        return conn.execute(
-            "SELECT balance FROM account WHERE id = %s", (str(account_id),)
-        ).fetchone()[0]
 
     def test_reversal_zeroes_effect(self, conn, make_account):
         customer = make_account(currency="BRL", normal_balance="credit")
@@ -366,12 +286,12 @@ class TestReversal:
             ],
         )
 
-        assert self._get_balance(conn, customer) == Decimal("500.0000")
+        assert get_balance(conn, customer) == Decimal("500.0000")
 
         reverse_transaction(conn, tx_id, str(uuid.uuid4()))
 
-        assert self._get_balance(conn, customer) == Decimal("0")
-        assert self._get_balance(conn, external) == Decimal("0")
+        assert get_balance(conn, customer) == Decimal("0")
+        assert get_balance(conn, external) == Decimal("0")
 
     def test_original_transaction_still_exists(self, conn, make_account):
         customer = make_account(currency="BRL", normal_balance="credit")
@@ -429,41 +349,6 @@ class TestReversal:
 
         with pytest.raises(Exception, match="reverses_id"):
             reverse_transaction(conn, tx_id, str(uuid.uuid4()))
-
-
-def reconcile(conn):
-    """Verify ledger integrity. Returns a dict with results.
-
-    Checks:
-    1. Global sum per currency is zero
-    2. Each account's projected balance matches SUM of its entries
-    """
-    global_check = conn.execute(
-        """
-        SELECT currency,
-               sum(CASE direction WHEN 'debit' THEN amount ELSE -amount END) AS net
-          FROM entry
-         GROUP BY currency
-        HAVING sum(CASE direction WHEN 'debit' THEN amount ELSE -amount END) <> 0
-        """
-    ).fetchall()
-
-    balance_mismatches = conn.execute(
-        """
-        SELECT a.id, a.code, a.balance AS projected,
-               COALESCE(sum(CASE e.direction WHEN 'credit' THEN e.amount ELSE -e.amount END), 0) AS derived
-          FROM account a
-          LEFT JOIN entry e ON e.account_id = a.id
-         GROUP BY a.id, a.code, a.balance
-        HAVING a.balance <> COALESCE(sum(CASE e.direction WHEN 'credit' THEN e.amount ELSE -e.amount END), 0)
-        """
-    ).fetchall()
-
-    return {
-        "ok": len(global_check) == 0 and len(balance_mismatches) == 0,
-        "global_imbalances": global_check,
-        "balance_mismatches": balance_mismatches,
-    }
 
 
 class TestReconciliation:
@@ -552,12 +437,6 @@ class TestReconciliation:
 
 class TestBalanceProjection:
 
-    def _get_balance(self, conn, account_id):
-        row = conn.execute(
-            "SELECT balance FROM account WHERE id = %s", (str(account_id),)
-        ).fetchone()
-        return row[0]
-
     def test_deposit_updates_balance(self, conn, make_account):
         customer = make_account(currency="BRL", normal_balance="credit")
         external = make_account(
@@ -577,8 +456,8 @@ class TestBalanceProjection:
             ],
         )
 
-        assert self._get_balance(conn, customer) == 500
-        assert self._get_balance(conn, external) == -500
+        assert get_balance(conn, customer) == 500
+        assert get_balance(conn, external) == -500
 
     def test_two_deposits_accumulate(self, conn, make_account):
         customer = make_account(currency="BRL", normal_balance="credit")
@@ -600,8 +479,8 @@ class TestBalanceProjection:
                 ],
             )
 
-        assert self._get_balance(conn, customer) == 200
-        assert self._get_balance(conn, external) == -200
+        assert get_balance(conn, customer) == 200
+        assert get_balance(conn, external) == -200
 
     def test_transfer_updates_both_balances(self, conn, make_account):
         alice = make_account(currency="BRL", normal_balance="credit")
@@ -633,8 +512,8 @@ class TestBalanceProjection:
             ],
         )
 
-        assert self._get_balance(conn, alice) == 700
-        assert self._get_balance(conn, bob) == 300
+        assert get_balance(conn, alice) == 700
+        assert get_balance(conn, bob) == 300
 
 
 class TestAppendOnly:
